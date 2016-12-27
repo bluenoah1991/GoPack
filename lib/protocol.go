@@ -34,8 +34,8 @@ const Qos1 = 1
 // Qos2 quality of service level 2 (only once)
 const Qos2 = 2
 
-// Message is a struct to hold a message
-type Message struct {
+// Packet is a struct to hold a message
+type Packet struct {
 	MsgType         byte
 	Qos             byte
 	Dup             bool
@@ -44,14 +44,14 @@ type Message struct {
 	TotalLength     uint16
 	Payload         []byte
 	Buffer          []byte
+
+	// used to storage
+	Confirm   bool
+	Timestamp uint64
 }
 
-// Protocol parser between buffer with pack
-type Protocol struct {
-}
-
-// Encode is used to convert bytes to message struct
-func (p Protocol) Encode(msgType byte, qos byte, dup byte, msgID uint16, payload []byte) Message {
+// Encode is used to convert bytes to packet struct
+func Encode(msgType byte, qos byte, dup byte, msgID uint16, payload []byte) Packet {
 	var remainingLength uint16
 	if payload != nil {
 		remainingLength = uint16(len(payload))
@@ -64,7 +64,7 @@ func (p Protocol) Encode(msgType byte, qos byte, dup byte, msgID uint16, payload
 	if payload != nil {
 		buffer.Write(payload)
 	}
-	return Message{
+	return Packet{
 		MsgType:         msgType,
 		Qos:             qos,
 		Dup:             byteToBool(dup),
@@ -76,31 +76,31 @@ func (p Protocol) Encode(msgType byte, qos byte, dup byte, msgID uint16, payload
 	}
 }
 
-// Decode is used to convert message struct to bytes
-func Decode(buf []byte) (msg Message, err error) {
+// Decode is used to convert packet struct to bytes
+func Decode(buf []byte) (packet *Packet, err error) {
 	buffer := bytes.NewBuffer(buf)
 	fixedHeader, err := buffer.ReadByte()
 	if err == io.EOF {
-		return msg, ErrDecode
+		return packet, ErrDecode
 	}
-	msg.MsgType = fixedHeader >> 4
-	msg.Qos = (fixedHeader & 0xf) >> 2
-	msg.Dup = byteToBool((fixedHeader & 0x3) >> 1)
-	msg.MsgID, err = decodeUint16(buffer)
+	packet.MsgType = fixedHeader >> 4
+	packet.Qos = (fixedHeader & 0xf) >> 2
+	packet.Dup = byteToBool((fixedHeader & 0x3) >> 1)
+	packet.MsgID, err = decodeUint16(buffer)
 	if err == ErrDecode {
-		return msg, ErrDecode
+		return packet, ErrDecode
 	}
-	msg.RemainingLength, err = decodeUint16(buffer)
+	packet.RemainingLength, err = decodeUint16(buffer)
 	if err == ErrDecode {
-		return msg, ErrDecode
+		return packet, ErrDecode
 	}
-	msg.Payload = make([]byte, msg.RemainingLength)
-	n, err := buffer.Read(msg.Payload)
-	if err == io.EOF || n != int(msg.RemainingLength) {
-		return msg, ErrDecode
+	packet.Payload = make([]byte, packet.RemainingLength)
+	n, err := buffer.Read(packet.Payload)
+	if err == io.EOF || n != int(packet.RemainingLength) {
+		return packet, ErrDecode
 	}
-	msg.Buffer = buf
-	return msg, nil
+	packet.Buffer = buf
+	return packet, nil
 }
 
 func boolToByte(b bool) byte {
