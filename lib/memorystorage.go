@@ -77,22 +77,20 @@ func (ms *MemoryStorage) Save(packet *Packet) {
 	heap.Push(ms, packet)
 }
 
-// Unconfirmed is used to return limit unconfirmed item
-func (ms *MemoryStorage) Unconfirmed(limit int) []*Packet {
+// Unconfirmed is used to return latest unconfirmed packet
+func (ms *MemoryStorage) Unconfirmed() *Packet {
 	ms.muxPriorityQueue.Lock()
 	defer ms.muxPriorityQueue.Unlock()
-	var items []*Packet
-	for limit > 0 {
-		item := heap.Pop(ms).(*Packet)
-		if item == nil {
-			break
-		} else if item.Confirm {
+	for {
+		packet := heap.Pop(ms).(*Packet)
+		if packet == nil {
+			return nil
+		} else if packet.Confirm {
 			continue
 		} else {
-			items = append(items, item)
+			return packet
 		}
 	}
-	return items
 }
 
 // Confirm is used to set element.Confirm to true and Fix priority queue

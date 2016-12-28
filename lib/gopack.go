@@ -1,22 +1,31 @@
 package gopack
 
-import "net"
-import "time"
-import "io"
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"errors"
+	"io"
+	"net"
+	"sync"
+	"time"
+)
+
+// ErrMissingParams missing parameters error
+var ErrMissingParams = errors.New("missing parameters")
 
 // GoPack GoPack main class
 type GoPack struct {
-	opts  *Options
-	conn  *net.TCPConn
-	errCh chan error
+	opts      *Options
+	conn      *net.TCPConn
+	errCh     chan error
+	exitCh    chan struct{}
+	waitGroup sync.WaitGroup
 }
 
 // StorageInterface storage class implementation
 type StorageInterface interface {
-	UniqueId() uint16
+	UniqueID() uint16
 	Save(*Packet)
-	Unconfirmed(int) []*Packet
+	Unconfirmed() *Packet
 	Confirm(uint16) *Packet
 	Receive(uint16, []byte)
 	Release(uint16) []byte
@@ -24,92 +33,176 @@ type StorageInterface interface {
 
 // Options GoPack create options
 type Options struct {
-	address         string
-	callback        func([]byte, error)
-	maxPacketNumber int
-	storage         *StorageInterface
-	heartbeat       int
+	Address         string
+	Callback        func([]byte, error)
+	MaxPacketNumber int
+	Storage         StorageInterface
+	Heartbeat       int
 }
 
 // NewGoPack creates and initializes a new GoPack using opts
-func NewGoPack(opts *Options) *GoPack {
-	var gp *GoPack
-	gp.opts = opts
-	gp.errCh = make(chan error)
-	return gp
-}
-
-func (gp *GoPack) cb(packet *Packet, err error) {
-	if gp.opts.callback != nil {
-		gp.opts.callback(packet.Payload, err)
+func NewGoPack(opts *Options) (gopack *GoPack, err error) {
+	if opts == nil ||
+		opts.Callback == nil {
+		return nil, ErrMissingParams
 	}
-}
-
-func (gp *GoPack) cbErr(err error) {
-	if gp.opts.callback != nil {
-		gp.opts.callback(nil, err)
+	if opts.MaxPacketNumber == 0 {
+		opts.MaxPacketNumber = 20
 	}
+	if opts.Heartbeat == 0 {
+		opts.Heartbeat = 1000
+	}
+	if opts.Storage == nil {
+		opts.Storage = new(MemoryStorage)
+	}
+	gopack = &GoPack{opts: opts}
+	return gopack, nil
 }
 
-func (gp *GoPack) readPacket() (packet *Packet, err error) {
+func (gopack *GoPack) cbErr(err error) {
+	gopack.opts.Callback(nil, err)
+}
+
+func (gopack *GoPack) readPacket() (packet *Packet, err error) {
 	buffer := make([]byte, 5)
-	_, err = io.ReadFull(gp.conn, buffer)
+	_, err = io.ReadFull(gopack.conn, buffer)
 	if err != nil {
-		return packet, err
+		return nil, err
 	}
 	num := buffer[3:]
 	remainingLength := binary.BigEndian.Uint16(num)
 	payload := make([]byte, remainingLength)
-	_, err = io.ReadFull(gp.conn, payload)
+	_, err = io.ReadFull(gopack.conn, payload)
 	if err != nil {
-		return packet, err
+		return nil, err
 	}
 	buffer = append(buffer, payload...)
 	return Decode(buffer)
 }
 
-func (gp *GoPack) read() {
+func (gopack *GoPack) read() {
+	defer gopack.waitGroup.Done()
 	for {
-		packet, err := gp.readPacket()
-		if err != nil {
-			gp.errCh <- err
+		select {
+		case <-gopack.exitCh:
 			return
+		default:
+			packet, err := gopack.readPacket()
+			if err != nil {
+				gopack.errCh <- err
+				return
+			}
+			gopack.handle(packet)
 		}
-		gp.handle(packet)
 	}
 }
 
-func (gp *GoPack) handle(packet *Packet) {
-	if packet.MsgType == MsgTypeSend {
-		if packet.Qos == Qos0 {
-			gp.cb(packet, nil)
-		} else if packet.Qos == Qos1 {
-			// TODO
+func (gopack *GoPack) retry(packet *Packet) (retryPacket *Packet, ok bool) {
+	if packet.Qos == Qos0 {
+		return retryPacket, false
+	}
+	if packet.RetryTimes > 0 {
+		retryPacket = packet.Clone()
+		retryPacket.RetryTimes++
+		retryPacket.Timestamp = time.Now().Add(
+			time.Duration(5*retryPacket.RetryTimes) * time.Second).Unix()
+	} else {
+		retryPacket = Encode(packet.MsgType, packet.Qos, 1, packet.MsgID, packet.Payload)
+		retryPacket.RetryTimes = 1
+		retryPacket.Timestamp = time.Now().Add(
+			time.Duration(5*retryPacket.RetryTimes) * time.Second).Unix()
+	}
+	return retryPacket, true
+}
+
+func (gopack *GoPack) write() {
+	defer gopack.waitGroup.Done()
+	for {
+		select {
+		case <-gopack.exitCh:
+			return
+		default:
+			packet := gopack.opts.Storage.Unconfirmed()
+			retryPacket, retry := gopack.retry(packet)
+			if retry {
+				gopack.opts.Storage.Save(retryPacket)
+			}
+			_, err := gopack.conn.Write(packet.Buffer)
+			if err != nil {
+				gopack.errCh <- err
+				return
+			}
 		}
 	}
+}
+
+func (gopack *GoPack) handle(packet *Packet) {
+	if packet.MsgType == MsgTypeSend {
+		if packet.Qos == Qos0 {
+			gopack.opts.Callback(packet.Payload, nil)
+		} else if packet.Qos == Qos1 {
+			reply := Encode(MsgTypeAck, Qos0, 0, packet.MsgID, nil)
+			gopack.opts.Storage.Save(reply)
+			gopack.opts.Callback(packet.Payload, nil)
+		} else if packet.Qos == Qos2 {
+			gopack.opts.Storage.Receive(packet.MsgID, packet.Payload)
+			reply := Encode(MsgTypeReceived, Qos0, 0, packet.MsgID, nil)
+			gopack.opts.Storage.Save(reply)
+		}
+	} else if packet.MsgType == MsgTypeAck {
+		gopack.opts.Storage.Confirm(packet.MsgID)
+	} else if packet.MsgType == MsgTypeReceived {
+		gopack.opts.Storage.Confirm(packet.MsgID)
+		reply := Encode(MsgTypeRelease, Qos1, 0, packet.MsgID, nil)
+		gopack.opts.Storage.Save(reply)
+	} else if packet.MsgType == MsgTypeRelease {
+		payload := gopack.opts.Storage.Release(packet.MsgID)
+		if payload != nil {
+			gopack.opts.Callback(payload, nil)
+		}
+		reply := Encode(MsgTypeCompleted, Qos0, 0, packet.MsgID, nil)
+		gopack.opts.Storage.Save(reply)
+	} else if packet.MsgType == MsgTypeCompleted {
+		gopack.opts.Storage.Confirm(packet.MsgID)
+	}
+}
+
+// Commit is used to commit message to GoPack
+func (gopack *GoPack) Commit(payload []byte, qos byte) {
+	packet := Encode(MsgTypeSend, qos, 0, gopack.opts.Storage.UniqueID(), payload)
+	gopack.opts.Storage.Save(packet)
 }
 
 // Start internal connection loop
-func (gp *GoPack) Start() {
-	go gp.SyncStart()
+func (gopack *GoPack) Start() {
+	go gopack.Conn()
 }
 
-// SyncStart internal connection loop (synchronization)
-func (gp *GoPack) SyncStart() {
+// Conn internal connection loop (synchronization)
+func (gopack *GoPack) Conn() {
 	for {
-		conn, err := net.DialTimeout("tcp", gp.opts.address, 2*time.Second)
+		conn, err := net.DialTimeout("tcp", gopack.opts.Address, 2*time.Second)
 		if err != nil {
-			gp.cbErr(err)
+			gopack.cbErr(err)
 		} else {
-			gp.conn = conn.(*net.TCPConn)
-			go gp.read()
-			err = <-gp.errCh
+			gopack.conn = conn.(*net.TCPConn)
+			gopack.exitCh = make(chan struct{})
+			gopack.errCh = make(chan error)
+			gopack.waitGroup.Add(2)
+			go gopack.read()
+			go gopack.write()
+			err = <-gopack.errCh
+			close(gopack.exitCh)
+			gopack.waitGroup.Wait()
+			close(gopack.errCh)
 			if err != nil {
-				gp.cbErr(err)
+				gopack.cbErr(err)
 			}
 		}
-		conn.Close()
-		gp.conn = nil
+		if conn != nil {
+			conn.Close()
+		}
+		gopack.conn = nil
 		time.Sleep(3 * time.Second)
 	}
 }

@@ -5,7 +5,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"time"
 )
+
+// MaxTime maximum datetime
+var MaxTime = time.Date(2500, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
 
 // ErrDecode means that a exception at the time of decoding
 var ErrDecode = errors.New("decode error")
@@ -46,12 +50,30 @@ type Packet struct {
 	Buffer          []byte
 
 	// used to storage
-	Confirm   bool
-	Timestamp uint64
+	Confirm    bool
+	RetryTimes int
+	Timestamp  int64
+}
+
+// Clone copy packet
+func (packet *Packet) Clone() (copyPacket *Packet) {
+	copyPacket = new(Packet)
+	copyPacket.MsgType = packet.MsgType
+	copyPacket.Qos = packet.Qos
+	copyPacket.Dup = packet.Dup
+	copyPacket.MsgID = packet.MsgID
+	copyPacket.RemainingLength = packet.RemainingLength
+	copyPacket.TotalLength = packet.TotalLength
+	copyPacket.Payload = packet.Payload
+	copyPacket.Buffer = packet.Buffer
+	copyPacket.Confirm = packet.Confirm
+	copyPacket.RetryTimes = packet.RetryTimes
+	copyPacket.Timestamp = packet.Timestamp
+	return copyPacket
 }
 
 // Encode is used to convert bytes to packet struct
-func Encode(msgType byte, qos byte, dup byte, msgID uint16, payload []byte) Packet {
+func Encode(msgType byte, qos byte, dup byte, msgID uint16, payload []byte) *Packet {
 	var remainingLength uint16
 	if payload != nil {
 		remainingLength = uint16(len(payload))
@@ -64,7 +86,7 @@ func Encode(msgType byte, qos byte, dup byte, msgID uint16, payload []byte) Pack
 	if payload != nil {
 		buffer.Write(payload)
 	}
-	return Packet{
+	return &Packet{
 		MsgType:         msgType,
 		Qos:             qos,
 		Dup:             byteToBool(dup),
@@ -73,6 +95,7 @@ func Encode(msgType byte, qos byte, dup byte, msgID uint16, payload []byte) Pack
 		TotalLength:     5 + remainingLength,
 		Payload:         payload,
 		Buffer:          buffer.Bytes(),
+		Timestamp:       MaxTime,
 	}
 }
 
@@ -81,25 +104,27 @@ func Decode(buf []byte) (packet *Packet, err error) {
 	buffer := bytes.NewBuffer(buf)
 	fixedHeader, err := buffer.ReadByte()
 	if err == io.EOF {
-		return packet, ErrDecode
+		return nil, ErrDecode
 	}
+	packet = new(Packet)
 	packet.MsgType = fixedHeader >> 4
 	packet.Qos = (fixedHeader & 0xf) >> 2
 	packet.Dup = byteToBool((fixedHeader & 0x3) >> 1)
 	packet.MsgID, err = decodeUint16(buffer)
 	if err == ErrDecode {
-		return packet, ErrDecode
+		return nil, ErrDecode
 	}
 	packet.RemainingLength, err = decodeUint16(buffer)
 	if err == ErrDecode {
-		return packet, ErrDecode
+		return nil, ErrDecode
 	}
 	packet.Payload = make([]byte, packet.RemainingLength)
 	n, err := buffer.Read(packet.Payload)
 	if err == io.EOF || n != int(packet.RemainingLength) {
-		return packet, ErrDecode
+		return nil, ErrDecode
 	}
 	packet.Buffer = buf
+	packet.Timestamp = MaxTime
 	return packet, nil
 }
 
