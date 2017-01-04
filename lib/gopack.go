@@ -53,7 +53,7 @@ func NewGoPack(opts *Options) (gopack *GoPack, err error) {
 		opts.Heartbeat = 1000
 	}
 	if opts.Storage == nil {
-		opts.Storage = new(MemoryStorage)
+		opts.Storage = NewMemoryStorage()
 	}
 	gopack = &GoPack{opts: opts}
 	return gopack, nil
@@ -83,6 +83,7 @@ func (gopack *GoPack) readPacket() (packet *Packet, err error) {
 func (gopack *GoPack) read() {
 	defer gopack.waitGroup.Done()
 	for {
+		time.Sleep(time.Duration(gopack.opts.Heartbeat) * time.Millisecond)
 		select {
 		case <-gopack.exitCh:
 			return
@@ -118,11 +119,15 @@ func (gopack *GoPack) retry(packet *Packet) (retryPacket *Packet, ok bool) {
 func (gopack *GoPack) write() {
 	defer gopack.waitGroup.Done()
 	for {
+		time.Sleep(time.Duration(gopack.opts.Heartbeat) * time.Millisecond)
 		select {
 		case <-gopack.exitCh:
 			return
 		default:
 			packet := gopack.opts.Storage.Unconfirmed()
+			if packet == nil {
+				continue
+			}
 			retryPacket, retry := gopack.retry(packet)
 			if retry {
 				gopack.opts.Storage.Save(retryPacket)
@@ -187,7 +192,7 @@ func (gopack *GoPack) Conn() {
 		} else {
 			gopack.conn = conn.(*net.TCPConn)
 			gopack.exitCh = make(chan struct{})
-			gopack.errCh = make(chan error)
+			gopack.errCh = make(chan error, 2)
 			gopack.waitGroup.Add(2)
 			go gopack.read()
 			go gopack.write()

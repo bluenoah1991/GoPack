@@ -3,6 +3,14 @@ package gopack
 import "sync"
 import "container/heap"
 
+// NewMemoryStorage creates and initializes a new MemoryStorage
+func NewMemoryStorage() *MemoryStorage {
+	ms := new(MemoryStorage)
+	ms.index = make(map[uint16]int)
+	ms.packets = make(map[uint16][]byte)
+	return ms
+}
+
 // MemoryStorage is used to save packet data
 type MemoryStorage struct {
 	uniqueID uint16 // incoming packet id
@@ -40,9 +48,12 @@ func (ms *MemoryStorage) Less(i, j int) bool {
 
 // Swap swaps the elements with indexes i and j
 func (ms *MemoryStorage) Swap(i, j int) {
-	ms.priorityQueue[i], ms.priorityQueue[j] = ms.priorityQueue[j], ms.priorityQueue[i]
-	ms.index[ms.priorityQueue[i].MsgID] = i
-	ms.index[ms.priorityQueue[j].MsgID] = j
+	n := len(ms.priorityQueue)
+	if i > 0 && i < n && j > 0 && j < n {
+		ms.priorityQueue[i], ms.priorityQueue[j] = ms.priorityQueue[j], ms.priorityQueue[i]
+		ms.index[ms.priorityQueue[i].MsgID] = i
+		ms.index[ms.priorityQueue[j].MsgID] = j
+	}
 }
 
 // Push add x as element Len()
@@ -57,9 +68,12 @@ func (ms *MemoryStorage) Push(x interface{}) {
 func (ms *MemoryStorage) Pop() interface{} {
 	old := ms.priorityQueue
 	n := len(old)
-	packet := old[n-1]
-	ms.priorityQueue = old[0 : n-1]
-	return packet
+	if n > 0 {
+		packet := old[n-1]
+		ms.priorityQueue = old[0 : n-1]
+		return packet
+	}
+	return nil
 }
 
 // UniqueID generate unique id for new packet
@@ -82,14 +96,17 @@ func (ms *MemoryStorage) Unconfirmed() *Packet {
 	ms.muxPriorityQueue.Lock()
 	defer ms.muxPriorityQueue.Unlock()
 	for {
-		packet := heap.Pop(ms).(*Packet)
-		if packet == nil {
-			return nil
-		} else if packet.Confirm {
-			continue
-		} else {
-			return packet
+		packet, ok := heap.Pop(ms).(*Packet)
+		if ok {
+			if packet.Confirm {
+				delete(ms.index, packet.MsgID)
+				continue
+			} else {
+				delete(ms.index, packet.MsgID)
+				return packet
+			}
 		}
+		return nil
 	}
 }
 
