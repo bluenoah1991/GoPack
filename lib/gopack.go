@@ -83,7 +83,6 @@ func (gopack *GoPack) readPacket() (packet *Packet, err error) {
 func (gopack *GoPack) read() {
 	defer gopack.waitGroup.Done()
 	for {
-		time.Sleep(time.Duration(gopack.opts.Heartbeat) * time.Millisecond)
 		select {
 		case <-gopack.exitCh:
 			return
@@ -119,13 +118,13 @@ func (gopack *GoPack) retry(packet *Packet) (retryPacket *Packet, ok bool) {
 func (gopack *GoPack) write() {
 	defer gopack.waitGroup.Done()
 	for {
-		time.Sleep(time.Duration(gopack.opts.Heartbeat) * time.Millisecond)
 		select {
 		case <-gopack.exitCh:
 			return
 		default:
 			packet := gopack.opts.Storage.Unconfirmed()
 			if packet == nil {
+				time.Sleep(time.Duration(gopack.opts.Heartbeat) * time.Millisecond)
 				continue
 			}
 			retryPacket, retry := gopack.retry(packet)

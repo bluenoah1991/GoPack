@@ -1,7 +1,10 @@
 package gopack
 
-import "sync"
-import "container/heap"
+import (
+	"container/heap"
+	"sync"
+	"time"
+)
 
 // NewMemoryStorage creates and initializes a new MemoryStorage
 func NewMemoryStorage() *MemoryStorage {
@@ -41,15 +44,15 @@ func (ms *MemoryStorage) Less(i, j int) bool {
 		return false
 	}
 	if item1.Timestamp == item2.Timestamp {
-		return item1.MsgID > item2.MsgID
+		return item1.MsgID < item2.MsgID
 	}
-	return item1.Timestamp > item2.Timestamp
+	return item1.Timestamp < item2.Timestamp
 }
 
 // Swap swaps the elements with indexes i and j
 func (ms *MemoryStorage) Swap(i, j int) {
 	n := len(ms.priorityQueue)
-	if i > 0 && i < n && j > 0 && j < n {
+	if i >= 0 && i < n && j >= 0 && j < n {
 		ms.priorityQueue[i], ms.priorityQueue[j] = ms.priorityQueue[j], ms.priorityQueue[i]
 		ms.index[ms.priorityQueue[i].MsgID] = i
 		ms.index[ms.priorityQueue[j].MsgID] = j
@@ -98,12 +101,15 @@ func (ms *MemoryStorage) Unconfirmed() *Packet {
 	for {
 		packet, ok := heap.Pop(ms).(*Packet)
 		if ok {
+			delete(ms.index, packet.MsgID)
 			if packet.Confirm {
-				delete(ms.index, packet.MsgID)
 				continue
 			} else {
-				delete(ms.index, packet.MsgID)
-				return packet
+				if packet.Timestamp > time.Now().Unix() {
+					heap.Push(ms, packet)
+				} else {
+					return packet
+				}
 			}
 		}
 		return nil

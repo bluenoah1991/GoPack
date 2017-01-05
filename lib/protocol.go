@@ -5,11 +5,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"time"
 )
 
 // MaxTime maximum datetime
-var MaxTime = time.Date(2500, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+// var MaxTime = time.Date(2500, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
 
 // ErrDecode means that a exception at the time of decoding
 var ErrDecode = errors.New("decode error")
@@ -95,7 +94,7 @@ func Encode(msgType byte, qos byte, dup byte, msgID uint16, payload []byte) *Pac
 		TotalLength:     5 + remainingLength,
 		Payload:         payload,
 		Buffer:          buffer.Bytes(),
-		Timestamp:       MaxTime,
+		Timestamp:       0,
 	}
 }
 
@@ -124,7 +123,7 @@ func Decode(buf []byte) (packet *Packet, err error) {
 		return nil, ErrDecode
 	}
 	packet.Buffer = buf
-	packet.Timestamp = MaxTime
+	packet.Timestamp = 0
 	return packet, nil
 }
 
