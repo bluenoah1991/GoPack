@@ -38,13 +38,14 @@ const Qos1 = 1
 const Qos2 = 2
 
 // Packet is a struct to hold a message
+// uint16 > int https://godoc.org/golang.org/x/mobile/cmd/gobind#hdr-Type_restrictions
 type Packet struct {
 	MsgType         byte
 	Qos             byte
 	Dup             bool
-	MsgID           uint16
-	RemainingLength uint16
-	TotalLength     uint16
+	MsgID           int
+	RemainingLength int
+	TotalLength     int
 	Payload         []byte
 	Buffer          []byte
 
@@ -72,10 +73,10 @@ func (packet *Packet) Clone() (copyPacket *Packet) {
 }
 
 // Encode is used to convert bytes to packet struct
-func Encode(msgType byte, qos byte, dup byte, msgID uint16, payload []byte) *Packet {
-	var remainingLength uint16
+func Encode(msgType byte, qos byte, dup byte, msgID int, payload []byte) *Packet {
+	var remainingLength int
 	if payload != nil {
-		remainingLength = uint16(len(payload))
+		remainingLength = len(payload)
 	}
 	var buffer bytes.Buffer
 	fixedHeader := byte((msgType << 4) | (qos << 2) | (dup << 1))
@@ -119,7 +120,7 @@ func Decode(buf []byte) (packet *Packet, err error) {
 	}
 	packet.Payload = make([]byte, packet.RemainingLength)
 	n, err := buffer.Read(packet.Payload)
-	if err == io.EOF || n != int(packet.RemainingLength) {
+	if err == io.EOF || n != packet.RemainingLength {
 		return nil, ErrDecode
 	}
 	packet.Buffer = buf
@@ -145,17 +146,18 @@ func byteToBool(b byte) bool {
 	}
 }
 
-func encodeUint16(num uint16) []byte {
+func encodeUint16(num int) []byte {
 	bytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(bytes, num)
+	binary.BigEndian.PutUint16(bytes, uint16(num))
 	return bytes
 }
 
-func decodeUint16(b io.Reader) (i uint16, err error) {
+func decodeUint16(b io.Reader) (i int, err error) {
 	num := make([]byte, 2)
 	n, err := b.Read(num)
 	if err == io.EOF || n != 2 {
 		return i, ErrDecode
 	}
-	return binary.BigEndian.Uint16(num), nil
+	val := binary.BigEndian.Uint16(num)
+	return int(val), nil
 }

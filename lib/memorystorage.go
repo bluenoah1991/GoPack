@@ -6,19 +6,19 @@ import (
 	"time"
 )
 
-// NewMemoryStorage creates and initializes a new MemoryStorage
-func NewMemoryStorage() *MemoryStorage {
-	ms := new(MemoryStorage)
-	ms.index = make(map[uint16]int)
-	ms.packets = make(map[uint16][]byte)
+// newMemoryStorage creates and initializes a new memoryStorage
+func newMemoryStorage() *memoryStorage {
+	ms := new(memoryStorage)
+	ms.index = make(map[int]int)
+	ms.packets = make(map[int][]byte)
 	return ms
 }
 
-// MemoryStorage is used to save packet data
-type MemoryStorage struct {
-	uniqueID uint16 // incoming packet id
-	index    map[uint16]int
-	packets  map[uint16][]byte
+// memoryStorage is used to save packet data
+type memoryStorage struct {
+	uniqueID int // incoming packet id
+	index    map[int]int
+	packets  map[int][]byte
 
 	// A PriorityQueue implements heap.
 	priorityQueue []*Packet
@@ -29,13 +29,13 @@ type MemoryStorage struct {
 }
 
 // Len is the number of elements in the priority queue
-func (ms *MemoryStorage) Len() int {
+func (ms *memoryStorage) Len() int {
 	return len(ms.priorityQueue)
 }
 
 // Less reports whether the element with
 // index i should sort before the element with index j.
-func (ms *MemoryStorage) Less(i, j int) bool {
+func (ms *memoryStorage) Less(i, j int) bool {
 	item1 := ms.priorityQueue[i]
 	item2 := ms.priorityQueue[j]
 	if item1.Confirm && !item2.Confirm {
@@ -50,7 +50,7 @@ func (ms *MemoryStorage) Less(i, j int) bool {
 }
 
 // Swap swaps the elements with indexes i and j
-func (ms *MemoryStorage) Swap(i, j int) {
+func (ms *memoryStorage) Swap(i, j int) {
 	n := len(ms.priorityQueue)
 	if i >= 0 && i < n && j >= 0 && j < n {
 		ms.priorityQueue[i], ms.priorityQueue[j] = ms.priorityQueue[j], ms.priorityQueue[i]
@@ -60,7 +60,7 @@ func (ms *MemoryStorage) Swap(i, j int) {
 }
 
 // Push add x as element Len()
-func (ms *MemoryStorage) Push(x interface{}) {
+func (ms *memoryStorage) Push(x interface{}) {
 	index := len(ms.priorityQueue)
 	packet := x.(*Packet)
 	ms.priorityQueue = append(ms.priorityQueue, packet)
@@ -68,7 +68,7 @@ func (ms *MemoryStorage) Push(x interface{}) {
 }
 
 // Pop remove and return element Len() - 1
-func (ms *MemoryStorage) Pop() interface{} {
+func (ms *memoryStorage) Pop() interface{} {
 	old := ms.priorityQueue
 	n := len(old)
 	if n > 0 {
@@ -80,7 +80,7 @@ func (ms *MemoryStorage) Pop() interface{} {
 }
 
 // UniqueID generate unique id for new packet
-func (ms *MemoryStorage) UniqueID() uint16 {
+func (ms *memoryStorage) UniqueID() int {
 	ms.muxUniqueID.Lock()
 	defer ms.muxUniqueID.Unlock()
 	ms.uniqueID++
@@ -88,14 +88,14 @@ func (ms *MemoryStorage) UniqueID() uint16 {
 }
 
 // Save insert packet into queue
-func (ms *MemoryStorage) Save(packet *Packet) {
+func (ms *memoryStorage) Save(packet *Packet) {
 	ms.muxPriorityQueue.Lock()
 	defer ms.muxPriorityQueue.Unlock()
 	heap.Push(ms, packet)
 }
 
 // Unconfirmed is used to return latest unconfirmed packet
-func (ms *MemoryStorage) Unconfirmed() *Packet {
+func (ms *memoryStorage) Unconfirmed() *Packet {
 	ms.muxPriorityQueue.Lock()
 	defer ms.muxPriorityQueue.Unlock()
 	for {
@@ -117,7 +117,7 @@ func (ms *MemoryStorage) Unconfirmed() *Packet {
 }
 
 // Confirm is used to set element.Confirm to true and Fix priority queue
-func (ms *MemoryStorage) Confirm(id uint16) *Packet {
+func (ms *memoryStorage) Confirm(id int) *Packet {
 	ms.muxPriorityQueue.Lock()
 	defer ms.muxPriorityQueue.Unlock()
 	index, ok := ms.index[id]
@@ -131,14 +131,14 @@ func (ms *MemoryStorage) Confirm(id uint16) *Packet {
 }
 
 // Receive and save packet
-func (ms *MemoryStorage) Receive(id uint16, payload []byte) {
+func (ms *memoryStorage) Receive(id int, payload []byte) {
 	ms.muxPackets.Lock()
 	defer ms.muxPackets.Unlock()
 	ms.packets[id] = payload
 }
 
 // Release and delete packet
-func (ms *MemoryStorage) Release(id uint16) []byte {
+func (ms *memoryStorage) Release(id int) []byte {
 	ms.muxPackets.Lock()
 	defer ms.muxPackets.Unlock()
 	packet := ms.packets[id]
